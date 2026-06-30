@@ -1,0 +1,451 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[turkish]{babel}
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+\usepackage{float}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\graphicspath{{./}}
+
+\definecolor{codegray}{RGB}{245,245,245}
+\definecolor{codegreen}{RGB}{0,128,0}
+\definecolor{codered}{RGB}{180,0,0}
+\definecolor{accentblue}{RGB}{0,119,182}
+
+\lstset{
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  keywordstyle=\color{accentblue}\bfseries,
+  commentstyle=\color{codegreen},
+  stringstyle=\color{codered},
+  frame=single,
+  language=Python
+}
+
+\begin{document}
+
+\title{Top1--Top2 Token Olasılık Farkından Özellik Çıkararak\\
+Cosmos-T1 Cevap Doğruluğu Tahmini}
+
+\author{
+  \IEEEauthorblockN{Betül Arslan}
+  \IEEEauthorblockA{
+    Hesaplamalı Anlambilim -- Proje Konusu 4\\
+    \texttt{betullarslan@gmail.com}
+  }
+}
+
+\maketitle
+
+\begin{abstract}
+Bu çalışmada, büyük dil modellerinin cevap üretimi sırasında oluşan token
+düzeyindeki olasılık farklarının, üretilen cevabın doğru olup olmadığını tahmin
+etmek için kullanılıp kullanılamayacağı incelenmiştir. Cosmos-T1
+(\texttt{ytu-ce-cosmos/Turkish-Gemma-9b-T1}) modeli, Türkçe GSM8K
+(\texttt{gsm8k\_tr}) veri kümesindeki matematik soruları üzerinde
+çalıştırılmıştır. Model her token ürettiğinde en yüksek olasılıklı token ile
+ikinci en yüksek olasılıklı token arasındaki fark kaydedilmiş, daha sonra bu
+fark dizilerinden 14 istatistiksel özellik çıkarılmıştır. Toplanan 357 kaydın
+187'si doğru, 170'i yanlış etiketlenmiştir. Sınıf dengesi sağlanarak 120 doğru
++ 120 yanlış örnek eğitim, 50 doğru + 50 yanlış örnek test için kullanılmıştır.
+Logistic Regression, Random Forest ve Gradient Boosting modelleri
+karşılaştırılmış; en dengeli sonuç Gradient Boosting ile elde edilmiştir
+(Accuracy=0.72, F1=0.72, ROC-AUC=0.762). Bulgular, top1--top2 fark dizisinin
+tek başına kusursuz bir ayırıcı olmadığını; ancak bu diziden çıkarılan
+istatistiksel özelliklerin cevap doğruluğu hakkında anlamlı sinyal taşıdığını
+göstermektedir.
+\end{abstract}
+
+\begin{IEEEkeywords}
+büyük dil modelleri, top1-top2 farkı, cevap doğruluğu, Cosmos-T1, GSM8K-TR,
+makine öğrenmesi
+\end{IEEEkeywords}
+
+\section{Giriş}
+
+Büyük dil modelleri her üretim adımında kelime dağarcığı üzerinde bir olasılık
+dağılımı hesaplar ve bu dağılımdan bir sonraki tokeni üretir. Bu dağılım yalnızca
+sonraki token seçimi için değil, modelin o adımda ne kadar kararlı olduğunu
+anlamak için de kullanılabilir. Bu çalışmada kullanılan temel sinyal,
+her üretim adımında en yüksek olasılıklı token ile ikinci en yüksek olasılıklı
+token arasındaki farktır.
+
+Bir üretim adımı $t$ için top1--top2 farkı şu şekilde tanımlanmıştır:
+
+\begin{equation}
+  \delta_t =
+  P(\hat{y}^{(1)}_t \mid x, y_{<t}) -
+  P(\hat{y}^{(2)}_t \mid x, y_{<t}),
+  \quad t=1,\ldots,T .
+  \label{eq:delta}
+\end{equation}
+
+Burada $\hat{y}^{(1)}_t$ ve $\hat{y}^{(2)}_t$, sırasıyla $t$. adımda en yüksek
+ve ikinci en yüksek olasılığa sahip tokenleri; $x$ giriş sorusunu, $y_{<t}$
+önceki tokenleri ve $T$ üretilen toplam token sayısını göstermektedir.
+$\delta_t$ değeri 0 ile 1 arasındadır. Değerin yüksek olması modelin ilk token
+seçimini ikinci seçeneğe göre daha güçlü tercih ettiğini, düşük olması ise iki
+seçenek arasında daha kararsız kaldığını gösterir.
+
+Bu çalışmanın araştırma sorusu şudur: Cosmos-T1 modeli bir matematik sorusuna
+cevap üretirken oluşan top1--top2 fark dizisi, cevabın doğru mu yanlış mı
+olduğunu tahmin etmek için kullanılabilir mi?
+
+\section{İlgili Çalışmalar}
+
+Sinir ağı çıktılarındaki olasılık değerlerinin güven ölçütü olarak kullanılması
+uzun süredir çalışılan bir konudur. Hendrycks ve Gimpel, maksimum softmax
+olasılığının yanlış sınıflandırılmış ve dağılım dışı örneklerin tespitinde basit
+ama etkili bir taban çizgisi sunduğunu göstermiştir~\cite{hendrycks2016}.
+Bu çalışma, modelin çıktı olasılıklarının hata tahmini için bilgi taşıyabileceği
+fikrini desteklemektedir.
+
+Büyük dil modelleri özelinde Kadavath ve arkadaşları, modellerin kendi
+cevaplarının doğruluğu hakkında belirli ölçüde bilgi taşıyabildiğini
+tartışmıştır~\cite{kadavath2022}. SelfCheckGPT çalışması ise dış bilgi kaynağı
+kullanmadan model çıktılarını karşılaştırarak güvenilirlik değerlendirmesi
+yapılabileceğini göstermiştir~\cite{selfcheckgpt}. Bizim çalışmamız bu çizgide,
+dış doğrulayıcı kullanmak yerine üretim sırasında oluşan iç olasılık sinyalini
+incelemektedir.
+
+Matematik problemi çözme tarafında GSM8K veri kümesi ve doğrulayıcı modeller
+üzerine yapılan çalışma, dil modellerinin matematik muhakemesi çıktılarının
+ayrı bir doğrulama aşamasıyla değerlendirilebileceğini göstermiştir~\cite{gsm8k}.
+Bu projede benzer biçimde cevap doğruluğu tahmin edilmektedir; ancak doğrulayıcı
+model doğrudan metin üzerinden değil, token olasılık farklarından çıkarılan
+sayısal özellikler üzerinden eğitilmiştir.
+
+\section{Model ve Veri Kümesi}
+
+\subsection{Cosmos-T1 Modeli}
+
+Deneylerde \texttt{ytu-ce-cosmos/Turkish-Gemma-9b-T1} modeli kullanılmıştır.
+Model, Türkçe akıl yürütme ve matematik problemleri için yayımlanmış Cosmos-T1
+ailesine ait bir Gemma tabanlı dil modelidir~\cite{cosmos}. Model kartındaki
+önerilere uygun olarak \texttt{temperature=0.6}, \texttt{top\_p=0.95},
+\texttt{top\_k=20} ve \texttt{do\_sample=True} ayarları kullanılmıştır.
+Greedy decoding tercih edilmemiştir.
+
+\subsection{GSM8K-TR Veri Kümesi}
+
+Veri kümesi olarak \texttt{ytu-ce-cosmos/gsm8k\_tr} kullanılmıştır~\cite{gsm8k_tr}.
+Bu veri kümesi, GSM8K matematik problemi veri kümesinin Türkçeye uyarlanmış
+sürümüdür. Veri kümesi sayfasında belirtildiği gibi sorular DeepL ile Türkçeye
+çevrilmiş, cevaplar ise Türkçe sorular üzerinden GPT-4o ile yeniden
+üretilmiştir.
+
+Orijinal GSM8K'de cevaplar çoğunlukla \texttt{\#\#\#\# <sayı>} biçiminde
+verilirken, bu Türkçe sürümde cevaplar düz metin halindedir. Bu nedenle altın
+cevap son satırlardaki sayısal ifadelerden çıkarılmıştır. Saat biçimli cevaplar
+(\texttt{10:30} gibi) sayı çıkarımında hataya neden olabileceği için filtrelenmiştir.
+Toplam 34 saat biçimli örnek elenmiş ve 8.734 temiz örnek elde edilmiştir.
+
+\section{Yöntem}
+
+\subsection{Top1--Top2 Farklarının Kaydedilmesi}
+
+Üretim sırasında her token için top1--top2 farkını almak için iki yöntem
+denenmiştir. İlk yöntemde \texttt{output\_scores=True} kullanılmıştır; ancak bu
+yöntem her adımda tüm kelime dağarcığına ait skorları sakladığı için bellek
+tüketimini artırmaktadır. Son sürümde yalnızca gerekli skalar farkı saklayan
+\texttt{LogitsProcessor} yaklaşımı kullanılmıştır.
+
+\begin{lstlisting}
+class Top1Top2Kaydedici(LogitsProcessor):
+    def __init__(self):
+        self.farklar = []
+
+    def __call__(self, input_ids, scores):
+        probs = torch.softmax(scores.float(), dim=-1)
+        top2 = torch.topk(probs, k=2, dim=-1).values
+        fark = (top2[:, 0] - top2[:, 1]).detach().cpu().tolist()
+        self.farklar.append(fark)
+        return scores
+\end{lstlisting}
+
+Bu yöntemle tüm logit vektörü yerine her adımda yalnızca $\delta_t$ değeri
+kaydedilmiştir. Böylece uzun cevaplarda bellek kullanımı daha kontrollü
+tutulmuştur.
+
+\subsection{Üretim Ayarları}
+
+\begin{table}[H]
+  \centering
+  \caption{Model üretim ayarları}
+  \label{tab:params}
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Parametre} & \textbf{Değer} \\
+    \midrule
+    Model & Turkish-Gemma-9b-T1 \\
+    \texttt{max\_new\_tokens} & 1024 \\
+    \texttt{temperature} & 0.6 \\
+    \texttt{top\_p} & 0.95 \\
+    \texttt{top\_k} & 20 \\
+    \texttt{do\_sample} & True \\
+    Donanım & A100, bfloat16 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Özellik Mühendisliği}
+
+Her cevap için top1--top2 farkları
+$\boldsymbol{\delta}=[\delta_1,\delta_2,\ldots,\delta_T]$ dizisi olarak
+saklanmıştır. Klasik makine öğrenmesi algoritmaları sabit boyutlu giriş
+gerektirdiği için bu değişken uzunluklu dizi 14 özellikten oluşan sabit boyutlu
+bir vektöre dönüştürülmüştür.
+
+Kullanılan özellikler şunlardır:
+
+\begin{itemize}
+  \item \texttt{n\_tokens}: Üretilen token sayısıdır. Çok uzun üretimler modelin
+        çözümü tamamlamakta zorlandığını veya token limitine yaklaştığını
+        gösterebilir.
+  \item \texttt{mean}: Ortalama top1--top2 farkıdır. Genel güven düzeyini özetler.
+  \item \texttt{std}: Fark dizisinin standart sapmasıdır. Güvenin cevap boyunca
+        ne kadar dalgalandığını ölçer.
+  \item \texttt{min}, \texttt{max}: En düşük ve en yüksek fark değerleridir.
+        En kararsız ve en kararlı üretim anlarını temsil eder.
+  \item \texttt{median}: Ortanca fark değeridir. Aykırı değerlerden ortalamaya
+        göre daha az etkilenir.
+  \item \texttt{q25}, \texttt{q75}, \texttt{iqr}: Dağılımın çeyrekleri ve
+        çeyrekler arası aralığıdır. Güven değerlerinin yayılımını özetler.
+  \item \texttt{mean\_first10}: İlk 10 tokenin ortalama farkıdır. Cevabın
+        başlangıcındaki güveni ölçer.
+  \item \texttt{mean\_last10}: Son 10 tokenin ortalama farkıdır. Nihai cevaba
+        yaklaşırken modelin güvenini temsil eder.
+  \item \texttt{prop\_low\_01}, \texttt{prop\_low\_02}: Farkı sırasıyla 0.10 ve
+        0.20 altında olan token oranlarıdır. Düşük güvenli token yoğunluğunu
+        ölçer.
+  \item \texttt{trend}: Fark dizisine uydurulan doğrusal eğimin katsayısıdır.
+        Cevap ilerledikçe güvenin artıp azaldığını gösterir.
+\end{itemize}
+
+Temel özellik formülleri aşağıda verilmiştir:
+
+\begin{align}
+  \mu &= \frac{1}{T}\sum_{t=1}^{T}\delta_t, \\
+  \sigma &= \sqrt{\frac{1}{T}\sum_{t=1}^{T}(\delta_t-\mu)^2}, \\
+  \mathrm{IQR} &= Q_{75}-Q_{25}, \\
+  p_{<\theta} &= \frac{1}{T}\sum_{t=1}^{T}\mathbf{1}[\delta_t < \theta],
+  \quad \theta \in \{0.10, 0.20\}.
+\end{align}
+
+\subsection{Eğitim ve Test Bölümlemesi}
+
+Toplanan 357 kaydın 187'si doğru, 170'i yanlış cevap olarak etiketlenmiştir.
+Sınıf dengesini sağlamak için her iki sınıftan 170'er örnek kullanılmıştır.
+Bunların 120'şer tanesi eğitim, 50'şer tanesi test kümesine ayrılmıştır.
+
+\begin{table}[H]
+  \centering
+  \caption{Dengeli eğitim ve test bölümlemesi}
+  \label{tab:split}
+  \begin{tabular}{lrrr}
+    \toprule
+    \textbf{Küme} & \textbf{Doğru} & \textbf{Yanlış} & \textbf{Toplam} \\
+    \midrule
+    Eğitim & 120 & 120 & 240 \\
+    Test & 50 & 50 & 100 \\
+    \textbf{Toplam} & \textbf{170} & \textbf{170} & \textbf{340} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Üç sınıflandırıcı karşılaştırılmıştır: Logistic Regression, Random Forest ve
+Gradient Boosting. Logistic Regression için \texttt{StandardScaler}
+kullanılmıştır. Random Forest 300 ağaçla eğitilmiş, Gradient Boosting için
+Scikit-learn varsayılan ayarları kullanılmıştır.
+
+\section{Deneysel Sonuçlar}
+
+\subsection{Model Performansı}
+
+\begin{table}[H]
+  \centering
+  \caption{Model karşılaştırması (240 eğitim, 100 test)}
+  \label{tab:results}
+  \begin{tabular}{lccccc}
+    \toprule
+    \textbf{Model} & \textbf{Acc} & \textbf{Prec} & \textbf{Rec} & \textbf{F1} & \textbf{AUC} \\
+    \midrule
+    Logistic Regression & 0.720 & 0.844 & 0.540 & 0.659 & 0.738 \\
+    Random Forest       & 0.700 & 0.727 & 0.640 & 0.681 & 0.747 \\
+    Gradient Boosting   & 0.720 & 0.720 & 0.720 & 0.720 & 0.762 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Sonuçlara göre en dengeli performans Gradient Boosting modeliyle elde edilmiştir.
+Bu model test kümesinde 0.72 doğruluk, 0.72 F1 ve 0.762 ROC-AUC değerlerine
+ulaşmıştır. Logistic Regression yanlış cevapları yakalamada daha temkinli
+davranmış, ancak doğru cevapların önemli bir kısmını yanlış sınıfına atamıştır.
+Random Forest ise iki sınıf arasında daha dengeli, fakat Gradient Boosting'e göre
+biraz daha düşük F1 skoru üretmiştir.
+
+\subsection{Token Bazlı Top1--Top2 Fark Grafiği}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig_token_level_diff.png}
+  \caption{Bir doğru ve bir yanlış örnek için token bazlı top1--top2 fark dizisi.}
+  \label{fig:token_diff}
+\end{figure}
+
+Şekil~\ref{fig:token_diff}, doğru ve yanlış cevaplanan iki örnekte top1--top2
+farkının token boyunca nasıl değiştiğini göstermektedir. Her iki çizgide de
+farklar sık sık 1'e yaklaşmaktadır; bu durum modelin birçok token için güçlü
+bir ilk tercih yaptığını gösterir. Ancak doğru ve yanlış örneklerin tamamen
+ayrışmadığı görülmektedir. Bu nedenle tek bir token düzeyi grafiği yerine
+fark dizisinden istatistiksel özellikler çıkarılmıştır.
+
+\subsection{Ortalama Fark Dağılımı}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig_mean_diff_distribution.png}
+  \caption{Doğru ve yanlış cevaplarda ortalama top1--top2 fark dağılımı.}
+  \label{fig:dist}
+\end{figure}
+
+Şekil~\ref{fig:dist}'te doğru ve yanlış cevapların ortalama fark dağılımları
+kısmen örtüşmektedir. Bu sonuç, yalnızca ortalama top1--top2 farkının cevap
+doğruluğunu ayırmak için yeterli olmadığını göstermektedir. Buna rağmen dağılımın
+tamamen rastgele olmaması, ortalama farkın diğer özelliklerle birlikte faydalı
+olabileceğini göstermektedir.
+
+\subsection{ROC Eğrileri}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\linewidth]{fig_roc.png}
+  \caption{Üç modelin ROC eğrileri. Kesikli çizgi rastgele tahmin düzeyini gösterir.}
+  \label{fig:roc}
+\end{figure}
+
+ROC eğrileri tüm modellerin rastgele tahmin çizgisinin üzerinde kaldığını
+göstermektedir. En yüksek AUC değeri 0.762 ile Gradient Boosting modelinde
+elde edilmiştir. Bu sonuç, top1--top2 farklarından çıkarılan özelliklerin cevap
+doğruluğu tahmini için anlamlı sinyal taşıdığını desteklemektedir.
+
+\subsection{Confusion Matrix}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig_confusion_matrix.png}
+  \caption{Logistic Regression, Random Forest ve Gradient Boosting modellerinin confusion matrix sonuçları.}
+  \label{fig:confusion}
+\end{figure}
+
+Confusion matrix sonuçları modellerin hata karakterini göstermektedir.
+Logistic Regression 50 yanlış cevabın 45'ini doğru biçimde yanlış olarak
+sınıflandırmıştır; ancak 50 doğru cevabın 23'ünü yanlış sanmıştır. Gradient
+Boosting ise her iki sınıfta da 36/50 doğru sınıflandırma yaparak en dengeli
+sonucu vermiştir.
+
+\subsection{Özellik Önemi}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{fig_feature_importance.png}
+  \caption{Random Forest ve Gradient Boosting modellerinde özellik önemleri.}
+  \label{fig:feat}
+\end{figure}
+
+Özellik önemi grafiğinde \texttt{n\_tokens}, \texttt{mean\_first10},
+\texttt{prop\_low\_01}, \texttt{trend}, \texttt{q75} ve
+\texttt{mean\_last10} öne çıkmaktadır. Bu sonuç, yalnızca genel ortalama güvenin
+değil, cevabın uzunluğunun, düşük güvenli token oranının ve üretim boyunca güven
+eğiliminin de doğru/yanlış ayrımı için etkili olduğunu göstermektedir.
+
+\section{Tartışma}
+
+Deneylerde Gradient Boosting'in daha dengeli sonuç vermesi, top1--top2 fark
+özellikleri arasındaki doğrusal olmayan ilişkilerin önemli olduğunu
+düşündürmektedir. Logistic Regression doğrusal bir karar sınırı kullandığından
+yanlış cevapları yakalamakta başarılı olsa da doğru cevapları daha fazla
+kaçırmıştır. Ağaç tabanlı modeller ise özellikle \texttt{n\_tokens},
+\texttt{trend} ve düşük güven oranı gibi özellikler arasındaki etkileşimleri
+daha iyi yakalamıştır.
+
+Özellik öneminde \texttt{n\_tokens}'ın güçlü çıkması dikkatle yorumlanmalıdır.
+Bu özellik doğrudan güven ölçütü değildir; modelin cevabı ne kadar uzattığını
+ve 1024 token sınırına yaklaşıp yaklaşmadığını yansıtır. Cosmos-T1 uzun
+\texttt{<think>} blokları ürettiği için bazı yanlış cevaplarda modelin çözümü
+tamamlayamadan token limitine yaklaştığı görülmektedir. Dolayısıyla
+\texttt{n\_tokens} bir vekil sinyal olarak çalışmaktadır.
+
+\section{Sınırlılıklar}
+
+Bu çalışmanın temel sınırlılığı veri toplama süresidir. Proje gereksiniminde
+1000 eğitim ve 100 test örneği hedeflenmiş olsa da, Cosmos-T1 modelinin uzun
+akıl yürütme çıktıları ve Colab GPU süresi nedeniyle bu çalışmada 240 eğitim ve
+100 test örneğiyle deney yapılmıştır. Test kümesi sınıf dengesi açısından
+gereksinimi karşılamaktadır; ancak eğitim kümesi hedeflenen büyüklüğün
+altındadır.
+
+İkinci sınırlılık, \texttt{gsm8k\_tr} cevaplarının düz metin biçiminde olmasıdır.
+Altın cevaplar düzenli ifadelerle çıkarılmıştır; bu süreçte az sayıda etiket
+gürültüsü kalmış olabilir. Üçüncü sınırlılık ise \texttt{max\_new\_tokens=1024}
+değeridir. Daha yüksek token limiti, modelin bazı cevapları tamamlamasına izin
+verebilir ve \texttt{n\_tokens} özelliğinin baskınlığını azaltabilir.
+
+\section{Sonuç}
+
+Bu çalışmada Cosmos-T1 modelinin Türkçe GSM8K sorularına verdiği cevapların
+doğruluğu, cevap üretimi sırasında oluşan top1--top2 token olasılık farklarından
+tahmin edilmeye çalışılmıştır. Her cevap için fark dizisinden 14 istatistiksel
+özellik çıkarılmış ve üç makine öğrenmesi modeli karşılaştırılmıştır. En iyi
+genel sonuç Gradient Boosting modeliyle elde edilmiştir.
+
+Sonuçlar, top1--top2 fark dizisinin doğru ve yanlış cevapları tek başına
+kusursuz biçimde ayırmadığını; ancak bu diziden çıkarılan istatistiksel
+özelliklerin cevap doğruluğu hakkında anlamlı ve ölçülebilir bir sinyal
+taşıdığını göstermektedir. Bu nedenle top1--top2 fark analizi, özellikle dış
+doğrulayıcı kullanılmadığı durumlarda LLM cevap güvenilirliği için yararlı bir
+yardımcı sinyal olarak değerlendirilebilir.
+
+\begin{thebibliography}{9}
+
+\bibitem{cosmos}
+YTU CE Cosmos, ``Turkish-Gemma-9b-T1,'' Hugging Face, 2024.
+[Online]. Available: \url{https://huggingface.co/ytu-ce-cosmos/Turkish-Gemma-9b-T1}
+
+\bibitem{gsm8k_tr}
+YTU CE Cosmos, ``gsm8k\_tr,'' Hugging Face, 2024.
+[Online]. Available: \url{https://huggingface.co/datasets/ytu-ce-cosmos/gsm8k_tr}
+
+\bibitem{gsm8k}
+K. Cobbe et al., ``Training Verifiers to Solve Math Word Problems,''
+\emph{arXiv:2110.14168}, 2021.
+
+\bibitem{hendrycks2016}
+D. Hendrycks and K. Gimpel, ``A Baseline for Detecting Misclassified and
+Out-of-Distribution Examples in Neural Networks,'' \emph{arXiv:1610.02136}, 2016.
+
+\bibitem{kadavath2022}
+S. Kadavath et al., ``Language Models (Mostly) Know What They Know,''
+\emph{arXiv:2207.05221}, 2022.
+
+\bibitem{selfcheckgpt}
+P. Manakul, A. Liusie, and M. J. F. Gales, ``SelfCheckGPT: Zero-Resource
+Black-Box Hallucination Detection for Generative Large Language Models,''
+\emph{arXiv:2303.08896}, 2023.
+
+\bibitem{sklearn}
+F. Pedregosa et al., ``Scikit-learn: Machine Learning in Python,''
+\emph{Journal of Machine Learning Research}, vol. 12, pp. 2825--2830, 2011.
+
+\end{thebibliography}
+
+\end{document}
