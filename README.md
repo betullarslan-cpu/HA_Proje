@@ -50,7 +50,9 @@ En dengeli sonuç Gradient Boosting modeli ile elde edilmiştir.
 
 ```text
 notebooks/
-  top1_top2_cosmos_t1.ipynb
+  BA_HA_But.ipynb              # temiz ve sirali final notebook
+  BA_HA_But_orijinal.ipynb     # calisma surecindeki orijinal notebook
+  top1_top2_cosmos_t1.ipynb    # onceki notebook kopyasi
 
 reports/
   rapor_yeni.pdf
@@ -79,3 +81,8 @@ Cosmos-T1 modeli uzun chain-of-thought çıktıları ürettiği için veri topla
 süreci GPU üzerinde zaman almıştır. Bu nedenle eğitim kümesi proje hedefindeki
 1000 örneğe ulaşamamış; ancak test kümesi 50 doğru + 50 yanlış olacak şekilde
 100 dengeli örnekten oluşturulmuştur.
+
+## Notebook Notu
+
+- `notebooks/BA_HA_But.ipynb`: GitHub ve teslim icin temizlenmis, sirali notebook.
+- `notebooks/BA_HA_But_orijinal.ipynb`: Calisma surecindeki orijinal notebook. Bilincli durdurulan uzun veri toplama hucrelerini de icerir.
