@@ -56,6 +56,9 @@ reports/
   rapor_yeni.pdf
   rapor_yeni_duzeltilmis.tex
 
+sunum/
+  sunum dosyalari
+
 figures/
   fig_token_level_diff.png
   fig_mean_diff_distribution.png
